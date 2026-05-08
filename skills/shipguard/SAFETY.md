@@ -101,55 +101,51 @@ Deep checks for bugs that hide until production. **All checks mandatory** — re
 
 #### S7.B: Queue Message Contracts (SQS/Kafka/RabbitMQ)
 
-**Detection**: See README.md for grep patterns.
-
 | Check | Severity | Signal |
-|-------|----------|--------|
+|-------|----------|---------|
 | S7.6 | BLOCKER | Message shape changed without version field |
 | S7.7 | BLOCKER | Required field added to message (old producers still running) |
 | S7.8 | BLOCKER | Consumer removed but producer still sends (orphan messages) |
 | S7.9 | WARNING | New message type without consumer (dead letters) |
 | S7.10 | WARNING | Topic/queue name changed |
 
-**Detection**: Use `ctx_batch_execute` to grep producers/consumers (`SendMessage|Publish|produce|KafkaProducer`, `ReceiveMessage|Subscribe|consume|KafkaConsumer`) across all repos. Index results, then `ctx_search(["topic name", "queue name"])` to find cross-repo matches.
-
 #### S7.C: DB Schema Cross-Service
 
 **Applies to**: when multiple services read/write same database tables
 
 | Check | Severity | Signal |
-|-------|----------|--------|
+|-------|----------|---------|
 | S7.11 | BLOCKER | Column removed that other services SELECT |
 | S7.12 | BLOCKER | Column type changed (other services expect old type) |
 | S7.13 | BLOCKER | Table renamed without updating all readers |
 | S7.14 | WARNING | New NOT NULL column (other services INSERT may fail) |
 | S7.15 | WARNING | Index removed that other services rely on for performance |
 
-**Detection**: Use `ctx_batch_execute` to extract table names from migrations and grep across repos for `FROM|JOIN|INSERT INTO|UPDATE {table}` in a single batch. `ctx_search(["{table_name}"])` to find cross-service readers.
-
 #### S7.D: Feature Flag Cross-Service
 
 **Applies to**: feature flags read by multiple services
 
 | Check | Severity | Signal |
-|-------|----------|--------|
+|-------|----------|---------|
 | S7.16 | BLOCKER | Flag removed but other services still check it |
 | S7.17 | BLOCKER | Flag default changed (behavior shift for services with cached value) |
 | S7.18 | WARNING | Flag renamed (other services use old name) |
-
-**Detection**: Use `ctx_batch_execute` to grep `isEnabled|getVariant|feature_flag|LaunchDarkly|Unleash` across repos. `ctx_search(["{flag_name}"])` to find cross-service usages.
 
 #### S7.E: Env Var Cross-Service
 
 **Applies to**: env vars shared across services (e.g., service URLs, shared secrets)
 
 | Check | Severity | Signal |
-|-------|----------|--------|
+|-------|----------|---------|
 | S7.19 | BLOCKER | Env var removed that other services expect |
 | S7.20 | BLOCKER | Env var format changed (URL path, port, etc.) |
 | S7.21 | WARNING | New required env var not in deployment manifests |
 
-**Detection**: Use `ctx_batch_execute` to grep `ENV|env:|getenv|os.environ|process.env` and scan k8s/docker manifests across repos. `ctx_search(["{VAR_NAME}"])` to find cross-service dependencies.
+**S7.B–E Detection (shared)**: batch all four grep families into one `ctx_batch_execute` pass across all repos, then use targeted `ctx_search` per finding:
+- Queue (S7.B): `SendMessage|Publish|produce|KafkaProducer|ReceiveMessage|Subscribe|consume|KafkaConsumer` → `ctx_search(["topic name", "queue name"])`
+- DB schema (S7.C): extract table names from migrations → `FROM|JOIN|INSERT INTO|UPDATE {table}` → `ctx_search(["{table_name}"])`
+- Feature flags (S7.D): `isEnabled|getVariant|feature_flag|LaunchDarkly|Unleash` → `ctx_search(["{flag_name}"])`
+- Env vars (S7.E): `ENV|env:|getenv|os.environ|process.env` + scan k8s/docker manifests → `ctx_search(["{VAR_NAME}"])`
 
 ### S8: Error Handling
 
@@ -270,7 +266,9 @@ find {release_repo_path} -maxdepth 3 -type f \( \
 
 ## Execution Strategy
 
-### Execution Approach
+**Phase 4 always runs as a subagent.** The subagent receives the Phase 2–3 handoff fields, loads SAFETY.md, performs all S1–S15 checks, and returns only the compact findings table + summary block. Main agent context receives ~200 tokens of findings, not 14.5KB of instructions.
+
+### Evidence Collection
 
 Required evidence set:
 - Changed files and diff hunks needed for S1-S13 checks.

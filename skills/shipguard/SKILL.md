@@ -22,18 +22,7 @@ Safety-first release review. Not about feature completeness — about **safe to 
 
 **All safety checks mandatory.** No skip option — if a check doesn't apply, it reports N/A.
 
-## Cross-Cutting Rules
-
-### GitNexus Preference
-
-- Prefer GitNexus-first analysis for diff, impact, and cross-repo reasoning.
-- Use grep/shell fallback when GitNexus is unavailable; mark findings as (fallback).
-
-### Cross-Repo Group Mode
-
-- When multiple services are involved, use group mode with cross-depth and sync when stale.
-
-### Severity Levels
+## Severity & Recommendation
 
 | Level | Meaning | Action |
 |-------|---------|--------|
@@ -41,41 +30,40 @@ Safety-first release review. Not about feature completeness — about **safe to 
 | **WARNING** | Risk requires mitigation | CONDITIONAL GO |
 | **INFO** | Notable, not blocking | noted in report |
 
-### Recommendation Logic
-
 - ≥1 BLOCKER → **NO-GO**
 - ≥1 WARNING → **CONDITIONAL GO** (list mitigations)
 - otherwise → **GO**
 
-## Global Execution Contract (All Phases)
+## Execution Contract
 
 These rules apply to every phase unless a phase explicitly overrides them.
 
-1. Context-mode first for read/query work
-- Prefer context batch/search tools for discovery and evidence collection.
-- Keep bulky raw outputs in buffers; summarize results in phase outputs.
+1. **Context-mode first** — prefer batch/search tools for evidence; summarize results, do not dump raw output.
+2. **Outcome over command shape** — any equivalent method acceptable if evidence quality and output contract are preserved.
+3. **Tool selection** — GitNexus/MCP for graph-aware analysis; CLI for git/filesystem ops; group mode when cross-links exist; grep/shell fallback when GitNexus unavailable → mark `(fallback)`.
+4. **Discovery** — use help/learn mode before unfamiliar commands; try one alternative path on failure, then continue with fallback marking.
+5. **Subagents** — Phase 4 (Safety Audit) always runs as a subagent; Phase 3 (Impact Analysis) runs as a subagent when `tier_table` has ≥1 Tier 1 or Tier 2 symbol.
+6. **Contracts** — preserve output schema; mark fallback rows as `(fallback)`; emit `(none)` for required empty sections.
 
-2. Outcome over command shape
-- Exact commands are not mandatory.
-- Any equivalent method is acceptable if evidence quality and output contract are preserved.
+## Subagent Invocation Template
 
-3. Tool and CLI selection
-- Let the agent choose MCP tool calls vs CLI commands by intent and evidence quality.
-- Prefer MCP/GitNexus primitives for graph-aware analysis; use CLI for filesystem or git-native operations.
+Subagents start with blank context — they do not inherit these rules automatically. When dispatching a subagent, the main agent must include this block verbatim in the prompt, filled with the relevant values:
 
-4. Help-first discovery when uncertain
-- For MCP hierarchical tools, use learn mode before selecting subcommands.
-- For CLI tools, use help output before unfamiliar flags/subcommands.
-- If a known-good command already fits the phase contract, use it directly.
-- If a path fails, try one equivalent path and continue with fallback marking.
+```
+You are running a ShipGuard analysis phase.
+Read: {skill_path}/{PHASE_FILE}
 
-5. Subagents when needed
-- Use subagents opportunistically for large or cross-repo analysis; main agent is fine for small scope.
-- If subagents are used, include a one-line reason in phase output or metadata.
+Global rules:
+- Prefer context-mode for evidence collection; summarize results, do not dump raw output.
+- GitNexus-first for graph-aware analysis; grep/shell fallback when unavailable — mark (fallback).
+- Outcome over command shape: any equivalent method is acceptable if evidence quality is preserved.
+- Help-first discovery when command shape is uncertain.
+- Mark fallback results as (fallback). Emit (none) for required empty sections.
 
-6. Contract preservation
-- Do not change a phase output schema while executing that phase.
-- If fallback paths are used (for example grep/shell), mark rows or notes as `(fallback)`.
+Inputs:
+{handoff_fields}
 
-7. Deterministic reporting
-- If a required section/table has no rows, emit an explicit `(none)`.
+Return: {output_contract} only. Do not include raw diff or tool output.
+```
+
+Fill `{PHASE_FILE}` with the phase file to load (e.g. `IMPACT.md`, `SAFETY.md`), `{handoff_fields}` with the structured handoff from the previous phase, and `{output_contract}` with the table/summary names defined in that phase's output contract.

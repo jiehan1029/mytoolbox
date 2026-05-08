@@ -145,6 +145,12 @@ For large symbol sets:
 | Shape drift mismatch | minimum Tier 2 |
 | High-cohesion cluster touched | minimum Tier 2 |
 
+## Execution Strategy
+
+Run Phase 3 as a **subagent** when `tier_table` contains ≥1 Tier 1 or Tier 2 symbol (covers almost all non-trivial diffs). Main agent receives only the output contract tables.
+
+Main agent is sufficient only when: all symbols are Tier 3, total symbol count <5, and cross-repo mode is off.
+
 ## Output Contract
 
 ### Blast Radius Table
