@@ -45,7 +45,7 @@ Resolve all fields in one pass from args, cwd, and targeted prompts.
 | Field | Derivation |
 |-------|------------|
 | `release_repo_path` | same as `repo_path` |
-| `base_repo_path` | `{repo_path}-base` |
+| `base_repo_path` | `{repo_path}-base` — cloned from release repo remote into sibling directory by orchestrator|
 | `deploy_target` | branch pattern map below |
 
 Deploy target map:

@@ -100,6 +100,8 @@ Safety Coverage:
   N/A: {check_ids} ({reason})
 ```
 
+Check IDs in scope: S1–S15 (S1.7, S7.0, S14, S15 included). S13 is N/A when no principles file found. S14 is N/A when no auth/middleware touched. S15 is N/A when no Tier 1 changes present.
+
 ### 7) Deploy Runbook
 
 Required checklist:

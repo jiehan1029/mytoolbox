@@ -16,6 +16,7 @@ Deep checks for bugs that hide until production. **All checks mandatory** — re
 | S1.4 | WARNING | Column rename (breaks running queries during deploy) |
 | S1.5 | WARNING | Type change that may truncate/lose data |
 | S1.6 | INFO | New index (note: build time estimate needed) |
+| S1.7 | WARNING | Migration does not follow expand-contract ordering: new column added as NOT NULL without a backfill-then-constraint sequence, or column removed without a deprecation-first phase (breaks old code running during rolling deploy window) |
 
 **Output**: flag migrations for human runtime estimate (table size, lock duration).
 
@@ -91,6 +92,7 @@ Deep checks for bugs that hide until production. **All checks mandatory** — re
 
 | Check | Severity | Signal |
 |-------|----------|--------|
+| S7.0 | BLOCKER | Proto field number reused with a different type (silent deserialization corruption; worse than removal — data is silently misread by existing consumers) |
 | S7.1 | BLOCKER | Required field added to existing message (breaks old producers) |
 | S7.2 | BLOCKER | Field type changed (deserialization failure) |
 | S7.3 | BLOCKER | Field removed that consumers depend on (verify via cypher shape drift in Phase 3) |
@@ -235,6 +237,36 @@ find {release_repo_path} -maxdepth 3 -type f \( \
 | S13.2 | WARNING | Incomplete compliance, mitigatable |
 
 **If no principles file**: Report `S13: N/A (no principles file found)`.
+
+### S14: Auth Regression
+
+**Applies to**: auth middleware, permission guards, role checks, JWT/session validation, any route/handler touched by the diff
+
+| Check | Severity | Signal |
+|-------|----------|--------|
+| S14.1 | BLOCKER | Permission guard removed or bypassed on existing endpoint |
+| S14.2 | BLOCKER | New endpoint added without auth middleware |
+| S14.3 | BLOCKER | Role/permission check weakened (e.g. `AND` → `OR`, stricter role replaced by broader role) |
+| S14.4 | BLOCKER | JWT/session validation logic changed (algorithm, expiry, scope handling) |
+| S14.5 | WARNING | RBAC model change: new role added, permission mapping changed, or scope set widened |
+| S14.6 | WARNING | Auth bypass condition added (e.g. new `if dev_mode` / `if internal_request` path without validation) |
+
+**Detection**: grep for auth middleware patterns (`@require_auth`, `authenticate`, `authorize`, `jwt.verify`, `hasPermission`, `requireRole`, `@login_required`, `before_action`) across changed handlers and their call chains. Flag removed decorators or guards on modified routes.
+
+### S15: Rolling Deploy Window Safety
+
+**Applies to**: any Tier 1 change deployed to a service with multiple instances or a rolling restart strategy
+
+| Check | Severity | Signal |
+|-------|----------|--------|
+| S15.1 | BLOCKER | New code writes a field that old schema does not have (forward-incompatible write during mixed-version window) |
+| S15.2 | BLOCKER | Old code reads a field that new schema removes (backward-incompatible read during mixed-version window) |
+| S15.3 | BLOCKER | Migration acquires table lock on high-traffic table without zero-downtime strategy (no `CONCURRENTLY`, no lock timeout) |
+| S15.4 | WARNING | Column added as NOT NULL without default — old running instances that INSERT will fail immediately |
+| S15.5 | WARNING | New required field in queue message sent by new code before all consumers are deployed |
+| S15.6 | INFO | Changes appear safe for rolling deploy but no explicit backward-compat evidence found — recommend smoke test on first instance before continuing rollout |
+
+**Detection**: cross-reference Tier 1 diff symbols against migration files and API/queue contracts from Phase 2. For each schema change, verify the dual-safety property: (1) new code + old schema = safe? (2) old code + new schema = safe? Flag if either fails.
 
 ## Execution Strategy
 
