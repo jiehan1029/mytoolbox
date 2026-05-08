@@ -24,6 +24,27 @@ For skill developers and maintainers only. Not loaded during execution.
 
 If GitNexus adds dedicated API/shape tools later, swap cypher blocks back.
 
+## Permissions
+
+Skill ships `permissions.json` listing all Bash + MCP tools it invokes. Without these pre-approved, every call prompts for approval.
+
+Install via Phase 1 Step 0 preflight (skill asks user/project scope at runtime), or manually:
+
+```bash
+# User-global (recommended)
+bash skills/shipguard/scripts/install_permissions.sh
+
+# Project-local (gitignored .claude/settings.local.json)
+bash skills/shipguard/scripts/install_permissions.sh --project
+
+# Check only — list missing perms without writing
+bash skills/shipguard/scripts/install_permissions.sh --check
+```
+
+Idempotent. Backs up target as `.bak.<timestamp>` before merge. Effective immediately, no Claude restart.
+
+**Trust note**: Permissions are blanket allow-lists for tool patterns (e.g., `Bash(git:*)`, `mcp__gitnexus__*`). Review `permissions.json` before installing. Project-local scope limits blast radius if you don't fully trust the skill's bundled scripts.
+
 ## Indexing Flags
 
 Provision scripts run `gitnexus analyze --skip-agents-md --skip-embeddings`.

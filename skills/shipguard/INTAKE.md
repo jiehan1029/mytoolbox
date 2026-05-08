@@ -2,7 +2,39 @@
 
 Collect inputs, validate early, confirm with user, then provision in parallel.
 
-**Flow**: Parse → Gather → **Validate** → Confirm → Provision → Joinpoint
+**Flow**: Preflight (perms) → Parse → Gather → **Validate** → Confirm → Provision → Joinpoint
+
+## Step 0: Preflight — Permission Setup
+
+**MANDATORY GATE. Do not proceed to Step 1 until this step completes.**
+
+Skill makes many Bash + MCP tool calls. Without pre-approved permissions, each call prompts the user individually — dozens of interrupts.
+
+**Action: Run check immediately.**
+
+```bash
+bash {skill_path}/scripts/install_permissions.sh --check
+```
+
+**If output is** `OK: all shipguard permissions already present` → proceed to Step 1.
+
+**If output lists missing permissions** → **STOP. Do not run any other command. Do not gather git info. Present this question to the user right now using AskUserQuestion:**
+
+- question: "Shipguard needs to pre-approve Bash + MCP permissions to avoid per-call prompts. Where should I install them?"
+- options:
+  - label: "User-global (~/.claude/settings.json)" — description: "Recommended. Applies across all projects."
+  - label: "Project-local (.claude/settings.local.json)" — description: "Scoped to this repo only. File is gitignored."
+  - label: "Skip — I'll approve each prompt manually" — description: "No install. Expect many approval prompts during the run."
+
+**After user responds:**
+
+- User-global → `bash {skill_path}/scripts/install_permissions.sh`
+- Project-local → `bash {skill_path}/scripts/install_permissions.sh --project`
+- Skip → no action
+
+Installer is idempotent and backs up target before writing. Permissions take effect immediately — no Claude restart needed.
+
+**Only after this step completes (or user chose Skip) → proceed to Step 1.**
 
 ## Step 1: Parse Args
 
