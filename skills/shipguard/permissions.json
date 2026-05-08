@@ -1,5 +1,5 @@
 {
-  "_comment": "Recommended permissions for shipguard. Merge into ~/.claude/settings.json (or .claude/settings.local.json) via skills/shipguard/install-permissions.sh.",
+  "_comment": "Recommended permissions for shipguard. Merge into .claude/settings.local.json via skills/shipguard/scripts/install_permissions.sh.",
   "permissions": {
     "allow": [
       "Bash(git:*)",

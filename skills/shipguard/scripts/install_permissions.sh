@@ -2,8 +2,7 @@
 # install_permissions.sh — Merge shipguard's recommended permissions into Claude Code settings.
 #
 # Usage:
-#   bash install_permissions.sh                  # Merge into ~/.claude/settings.json (user-global)
-#   bash install_permissions.sh --project        # Merge into <cwd>/.claude/settings.local.json (project-local)
+#   bash install_permissions.sh                  # Merge into <cwd>/.claude/settings.local.json (project-local)
 #   bash install_permissions.sh --check          # Print which perms are missing (no write)
 #
 # Idempotent: only adds missing entries. Always creates a .bak backup before writing.
@@ -23,22 +22,17 @@ if [[ ! -f "$PERMS_SRC" ]]; then
   exit 1
 fi
 
-MODE="user"
 CHECK_ONLY=false
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --project) MODE="project"; shift ;;
     --check) CHECK_ONLY=true; shift ;;
+    --project) echo "INFO: --project is now the default behavior and can be omitted."; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
-if [[ "$MODE" = "user" ]]; then
-  TARGET="$HOME/.claude/settings.json"
-else
-  mkdir -p "$(pwd)/.claude"
-  TARGET="$(pwd)/.claude/settings.local.json"
-fi
+mkdir -p "$(pwd)/.claude"
+TARGET="$(pwd)/.claude/settings.local.json"
 
 # Ensure target exists with valid JSON
 if [[ ! -f "$TARGET" ]]; then

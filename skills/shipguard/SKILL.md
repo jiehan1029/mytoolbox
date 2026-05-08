@@ -24,32 +24,14 @@ Safety-first release review. Not about feature completeness — about **safe to 
 
 ## Cross-Cutting Rules
 
-### GitNexus First, Fallback Second
+### GitNexus Preference
 
-**Tools used:**
-- `detect_changes` — diff→symbol + `affected_processes`
-- `impact` — per-symbol blast radius (`byDepth`, risk, processes)
-- `context` — 360° symbol view (callers, callees, refs, process participation)
-- `query` — process-grouped hybrid search (BM25 + semantic + RRF)
-- `cypher` — raw Cypher graph queries (custom safety checks; replaces hallucinated `api_impact`/`shape_check`)
-- `rename` — multi-file rename safety check (Tier 1 renames)
-- `group_sync`, `group_status`, `group_contracts`, `group_query`, `group_list` — multi-repo
+- Prefer GitNexus-first analysis for diff, impact, and cross-repo reasoning.
+- Use grep/shell fallback when GitNexus is unavailable; mark findings as (fallback).
 
-**MCP prompts (use as primary path where applicable):**
-- `detect_impact` — pre-commit change analysis (Phase 2 entry point)
+### Cross-Repo Group Mode
 
-**MCP resources (read-only context dumps):**
-- `gitnexus://repo/{name}/context` — stats + staleness
-- `gitnexus://repo/{name}/processes` — all execution flows
-- `gitnexus://repo/{name}/process/{name}` — full process trace
-- `gitnexus://repo/{name}/clusters` — functional clusters + cohesion (blast radius hints)
-- `gitnexus://repo/{name}/schema` — graph schema for cypher construction
-
-Fallback: `git grep` when GitNexus unavailable. Mark findings as `(fallback)`.
-
-### Group Mode for Cross-Repo
-
-When multiple services involved, use `repo: "@{group_name}"` with `crossDepth: 2`. Run `gitnexus group sync {name}` if stale.
+- When multiple services are involved, use group mode with cross-depth and sync when stale.
 
 ### Severity Levels
 
@@ -65,6 +47,35 @@ When multiple services involved, use `repo: "@{group_name}"` with `crossDepth: 2
 - ≥1 WARNING → **CONDITIONAL GO** (list mitigations)
 - otherwise → **GO**
 
-### Subagent Pattern
+## Global Execution Contract (All Phases)
 
-Dispatch `general-purpose` subagents for parallel analysis. Output: **structured rows only** — no raw diffs, no GitNexus dumps.
+These rules apply to every phase unless a phase explicitly overrides them.
+
+1. Context-mode first for read/query work
+- Prefer context batch/search tools for discovery and evidence collection.
+- Keep bulky raw outputs in buffers; summarize results in phase outputs.
+
+2. Outcome over command shape
+- Exact commands are not mandatory.
+- Any equivalent method is acceptable if evidence quality and output contract are preserved.
+
+3. Tool and CLI selection
+- Let the agent choose MCP tool calls vs CLI commands by intent and evidence quality.
+- Prefer MCP/GitNexus primitives for graph-aware analysis; use CLI for filesystem or git-native operations.
+
+4. Help-first discovery when uncertain
+- For MCP hierarchical tools, use learn mode before selecting subcommands.
+- For CLI tools, use help output before unfamiliar flags/subcommands.
+- If a known-good command already fits the phase contract, use it directly.
+- If a path fails, try one equivalent path and continue with fallback marking.
+
+5. Subagents when needed
+- Use subagents opportunistically for large or cross-repo analysis; main agent is fine for small scope.
+- If subagents are used, include a one-line reason in phase output or metadata.
+
+6. Contract preservation
+- Do not change a phase output schema while executing that phase.
+- If fallback paths are used (for example grep/shell), mark rows or notes as `(fallback)`.
+
+7. Deterministic reporting
+- If a required section/table has no rows, emit an explicit `(none)`.

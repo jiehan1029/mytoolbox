@@ -1,259 +1,158 @@
 # Phase 2 — Diff Triage
 
-Extract changes, map to symbols, tier by reversibility risk.
+Extract changes, map to symbols, and tier by reversibility risk.
 
-**Input from Phase 1:**
-- `release_repo_path`: repo with release branch checked out
-- `base_repo_path`: sibling folder with base branch checked out (separate clone)
-- `release_sha`, `base_sha`: HEADs of each
+## Inputs (from Phase 1)
 
-## Step 1: Raw Diff Stats
+- `release_repo_path`
+- `base_repo_path`
+- `release_branch`, `base_branch`
+- `release_sha`, `base_sha`
 
-Use `ctx_batch_execute` to run all git commands — output is indexed in sandbox, not main context:
+## Step 1: Collect Diff Evidence
 
-```
-ctx_batch_execute([
-  {label: "setup base remote", command: "git -C {release_repo_path} remote add base-temp {base_repo_path} 2>/dev/null || true && git -C {release_repo_path} fetch base-temp {base_branch}"},
-  {label: "commit log", command: "git -C {release_repo_path} log base-temp/{base_branch}..HEAD --oneline"},
-  {label: "diff stat", command: "git -C {release_repo_path} diff base-temp/{base_branch}...HEAD --stat"},
-  {label: "diff shortstat", command: "git -C {release_repo_path} diff base-temp/{base_branch}...HEAD --shortstat"},
-  {label: "changed files", command: "git -C {release_repo_path} diff base-temp/{base_branch}...HEAD --name-only"}
-])
-```
+Goal: gather enough evidence for triage without sending raw diff into main context.
 
-Then `ctx_search(["commit count", "files changed", "insertions deletions"])` to extract stats.
+Required evidence:
+- Commit list between base and release
+- Diff stat + shortstat
+- Changed file list
 
-Fallback if remote approach fails:
-```
-ctx_batch_execute([
-  {label: "folder diff", command: "diff -rq {base_repo_path} {release_repo_path} --exclude='.git' | head -100"}
-])
+Example shape only:
+
+```text
+ctx_batch_execute([...commit log..., ...diff stat..., ...shortstat..., ...name-only...])
+ctx_search(["commit count", "files changed", "insertions deletions"])
 ```
 
-## Step 2: GitNexus Symbol Mapping
+Fallback:
+- If base reference compare fails, compare by SHA (`{base_sha}...{release_sha}`) and continue.
 
-**Primary path — `detect_impact` MCP prompt** (purpose-built for pre-commit analysis):
+## Step 2: Symbol Mapping
 
-```
-Use prompt: detect_impact
-  repo: "{release_repo_path}"
-  base_ref: "base-temp/{base_branch}"
-```
+Preferred:
+- Use GitNexus `detect_impact` prompt with best available base reference.
 
-Returns scoped change analysis: affected processes, risk level, blast radius hints.
+Fallback:
+- Use `detect_changes` compare scope with best available base reference.
 
-**If prompt unavailable, fallback to `detect_changes` tool:**
+Optional enrichment:
+- Read cluster context (`gitnexus://repo/{name}/clusters`) and treat high-cohesion cluster touches as wider blast radius.
 
-```
-mcp__gitnexus__detect_changes({
-  repo: "{release_repo_path}",
-  scope: "compare",
-  base_ref: "base-temp/{base_branch}"
-})
-```
-
-Returns: `changed_symbols`, `affected_processes`, `risk`.
-
-**Enrich with cluster context** (read-only resource — cheap):
-
-```
-Read: gitnexus://repo/{name}/clusters
-```
-
-Cross-reference changed_symbols against cluster cohesion scores. High-cohesion cluster touched = wider blast radius.
-
-**Last-resort fallback** (no GitNexus):
-
-```bash
-git -C {release_repo_path} diff base-temp/{base_branch}...HEAD --name-only
-```
-
-Then grep for function/class definitions in changed files.
+Last-resort (no GitNexus):
+- Use changed-file list + grep/AST-level symbol extraction.
 
 ## Step 3: Tier Classification
 
-**Tier 1 — Irreversible** (review first, block on any concern):
+### Tier 1 (Irreversible / breaking)
 
 | Category | Signals |
 |----------|---------|
-| DB migrations | `DROP`, `ALTER ... NOT NULL`, `RENAME`, index on large table |
-| Schema changes | removed/renamed columns, changed types, removed tables |
-| API breaking | removed endpoints, changed request/response shapes |
-| Auth changes | permission logic, JWT handling, role resolution |
-| Data deletion | `DELETE`, `TRUNCATE`, cascade operations |
+| DB migrations | `DROP`, destructive `ALTER`, rename, risky index operations |
+| Schema changes | removed/renamed columns/tables, type changes |
+| API breaking | removed endpoints, request/response shape breaks |
+| Auth changes | permission/JWT/role-resolution logic changes |
+| Data deletion | `DELETE`, `TRUNCATE`, cascade effects |
 
-**Tier 2 — Hard to Reverse** (deep analysis required):
-
-| Category | Signals |
-|----------|---------|
-| Shared code | helpers/utilities with >5 callers |
-| Middleware | request lifecycle, interceptors |
-| Background jobs | signature changes, semantics, idempotency |
-| Feature flags | removals, changes to existing flag behavior |
-| External integrations | API clients, webhook handlers |
-
-**Tier 3 — Contained** (standard review):
+### Tier 2 (Hard to reverse)
 
 | Category | Signals |
 |----------|---------|
-| New endpoints | additive APIs (check auth coverage) |
-| Internal refactors | renames, moves within module |
-| Config additions | new env vars with safe defaults |
-| Test changes | test-only files |
+| Shared code | helpers/utilities with many callers |
+| Middleware/runtime path | request lifecycle/interceptors |
+| Jobs/workers | signature or semantic changes, idempotency impact |
+| Feature flags | behavior change/removal of existing flags |
+| External integrations | API clients, webhooks, contracts |
 
-## Step 4: Special File Detection
+### Tier 3 (Contained)
 
-Detect files requiring extra scrutiny:
+| Category | Signals |
+|----------|---------|
+| Additive endpoints | new APIs with auth checks |
+| Internal refactors | rename/move within bounded module |
+| Config additions | new env/config with safe defaults |
+| Test-only changes | tests and fixtures |
+
+## Step 4: Special Files
+
+Flag these paths for extra scrutiny:
 
 | Pattern | Action |
 |---------|--------|
-| `**/migrations/**`, `*.sql` | flag for migration review |
-| `*lock*`, `*.sum`, `go.mod`, `package.json` | dependency analysis |
-| `*.proto`, `*.graphql`, `openapi.*` | contract change detection |
-| `Dockerfile`, `*.yaml` (k8s), `terraform/*` | infra change flag |
-| `.env*`, `*config*`, `*secret*` | config change flag |
+| `**/migrations/**`, `*.sql` | migration risk review |
+| `*lock*`, `*.sum`, `go.mod`, `package.json` | dependency/major-version change review |
+| `*.proto`, `*.graphql`, `openapi.*` | contract change review |
+| `Dockerfile`, `*.yaml` (k8s), `terraform/*` | infra/deploy change review |
+| `.env*`, `*config*`, `*secret*` | config/secret handling review |
 
-## Step 5: Diff Analysis Strategy
+## Step 5: Analysis Strategy
 
-**Principle**: Raw diff never enters main context. Use `ctx_batch_execute` for data gathering; subagents for reasoning on large diffs.
+Principles:
+- Keep raw diff out of main context.
+- Optimize for speed on small diffs, subagents on larger diffs.
 
-### Check Diff Size
-
-Extract from ctx index (already captured in Step 1 shortstat).
-
-### Strategy Selection
+Selection:
 
 | Condition | Strategy |
 |-----------|----------|
-| <300 lines AND <10 files | **Fast path**: main agent reasons directly using ctx_search |
-| Everything else | **Subagent path**: parallel subagents, structured output |
+| `<300` changed lines AND `<10` files | Fast path (main agent) |
+| Otherwise | Subagent path (parallel) |
 
-### Fast Path (small diffs)
+### Fast Path
 
-`ctx_search(["changed files", "diff stat"])` to extract file list + symbols. Main agent classifies tiers and extracts signatures directly. Skip subagents.
+Main agent performs:
+- Tier classification
+- Signature-change extraction
+- Cross-cutting scan
 
-### Subagent Path (standard)
+using captured evidence from Steps 1–4.
 
-Dispatch 3 parallel subagents in single message. **Raw diff stays in subagent context, never enters main.**
+### Subagent Path
 
-#### Subagent A: Tier + Signature Analysis
+Run 2 subagents in parallel.
 
-```
-Agent({
-  subagent_type: "general-purpose",
-  prompt: "Analyze diff for tier classification and signature changes.
-           
-           Repo: {release_repo_path}
-           Base repo: {base_repo_path}
-           
-           PART 1 - Tier Classification:
-           Run: git diff base-temp/{base_branch}...HEAD
-           
-           Tier definitions:
-           - Tier 1 (Irreversible): migrations, schema DROP/ALTER, API breaking, auth changes
-           - Tier 2 (Hard to reverse): shared code >5 callers, middleware, background jobs
-           - Tier 3 (Contained): new endpoints, internal refactors, config additions
-           
-           PART 2 - Signature Changes:
-           For modified files with functions/classes, compare old (base) vs new (release).
-           Include: functions, methods, __init__, constructor, initialize, NewXxx
-           
-           Signature patterns (skip if language not listed):
-           - Python: def name(params) -> type, def __init__(self, params)
-           - TypeScript/JS: function name(params): Type, constructor(params)
-           - Go: func Name(params) (returns), func NewXxx(params)
-           - Ruby: def name(params), def initialize(params)
-           - Other languages: skip signature table, note in output
-           
-           Change severity:
-           - HIGH: arity change, param removed, type change, required param added,
-                   param reordered (positional-order-changed), variadic added/removed/moved
-           - MEDIUM: return type narrowed, default changed, param renamed (keyword callers affected)
-           - LOW: optional param added, return type widened
-           
-           POSITIONAL ORDER RULE: If any parameter moved to a different position (even if arity
-           is unchanged and types look compatible), flag as HIGH / positional-order-changed.
-           Callers using positional syntax silently pass wrong values — no error at call time.
-           
-           Variadic changes to flag:
-           - *args/*kwargs / ...rest / variadic added: callers passing fixed positionals may shift
-           - variadic removed: spread callers break
-           - variadic moved (e.g., *args no longer last): always HIGH
-           
-           Return TWO tables:
-           
-           TIER TABLE:
-           | symbol | file | tier | category | notes |
-           
-           SIGNATURE TABLE — include a positional_exposure column:
-           | symbol | kind | file | old_sig | new_sig | change_type | positional_exposure | risk |
-           
-           positional_exposure values:
-           - HIGH: Go, C, Rust, C# (no named args) — any reorder is always positional-unsafe
-           - MEDIUM: Python, Ruby (keyword args possible but positional callers exist)
-           - LOW: TypeScript with object-param pattern ({a, b} destructuring) — named, reorder-safe
-           - N/A: no positional risk (change_type unrelated to ordering)
-           
-           No raw diff or file contents in output."
-})
-```
+Subagent A output requirements:
+- `tier_table`
+- `signature_changes`
 
-#### Subagent B: Cross-Cutting Checks
+Subagent A rules:
+- Apply tier definitions above.
+- Compare old vs new signatures for modified functions/methods/constructors.
+- Languages: Python, TS/JS, Go, Ruby best-effort; others `N/A`.
+- Risk rules:
+  - HIGH: arity change, required param add/remove, reorder, variadic add/remove/move, incompatible type change
+  - MEDIUM: default change, keyword-sensitive rename, return narrowing
+  - LOW: optional param add, return widening
+- Positional-order rule: any parameter reorder is HIGH (`positional-order-changed`).
 
-```
-Agent({
-  subagent_type: "general-purpose",
-  prompt: "Scan diff for cross-cutting concerns.
-           
-           Repo: {release_repo_path}
-           Base: base-temp/{base_branch}
-           
-           Check for:
-           - Deployment coupling: coordinated deploy needed?
-           - Lockfile/dep changes: new deps, major bumps, removals
-           - Dependency CVEs: check if updated deps have known vulnerabilities
-           
-           Return ONLY structured table:
-           | concern | file | line | detail | severity |
-           
-           No raw diff in output."
-})
-```
+Subagent B output requirements:
+- `cross_cutting_findings`
 
-### Dispatch Pattern
+Subagent B checks:
+- Deployment coupling / coordinated rollout need
+- Dependency changes: new deps, major version bumps, removals
 
-```python
-# Single message, both subagents launch in parallel
-Agent(subagent_A_prompt)
-Agent(subagent_B_prompt)
+## Output Contract (for Phase 3)
 
-# Merge results into:
-#   - tier_table (from A)
-#   - signature_changes (from A)
-#   - cross_cutting_findings (from B)
-```
-
-## Output (Merged from Subagents)
-
-### Tier Table (from Subagent A)
+### Tier Table (`tier_table`)
 
 | Symbol | File | Tier | Category | Notes |
 |--------|------|------|----------|-------|
 | `{symbol_name}` | `{file_path}` | `{1\|2\|3}` | `{category}` | `{notes}` |
 
-### Signature Changes (from Subagent A)
+### Signature Changes (`signature_changes`)
 
 | Symbol | Kind | File | Old | New | Change | Positional Exposure | Risk |
 |--------|------|------|-----|-----|--------|---------------------|------|
 | `{symbol_name}` | `{func\|constructor}` | `{file_path}` | `{old_sig}` | `{new_sig}` | `{change_type}` | `{HIGH\|MEDIUM\|LOW\|N/A}` | `{risk}` |
 
-### Cross-Cutting Findings (from Subagent C)
+### Cross-Cutting Findings (`cross_cutting_findings`)
 
 | Concern | File | Line | Detail | Severity |
 |---------|------|------|--------|----------|
 | `{concern_type}` | `{file_path}` | `{line_num}` | `{detail}` | `{BLOCKER\|WARNING\|INFO}` |
 
-### Special Files (from Step 4)
+### Special Files
 
 | Field | Contents |
 |-------|----------|
@@ -262,4 +161,4 @@ Agent(subagent_B_prompt)
 | `contract_files` | proto/graphql/openapi changed |
 | `infra_files` | Docker/k8s/terraform changed |
 
-Hand off all tables to Phase 3.
+Hand off all outputs to Phase 3.

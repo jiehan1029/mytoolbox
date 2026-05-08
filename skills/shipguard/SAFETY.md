@@ -182,6 +182,20 @@ Deep checks for bugs that hide until production. **All checks mandatory** — re
 | S10.3 | WARNING | High-cardinality metric label (unbounded values) |
 | S10.4 | INFO | New external call without latency instrumentation |
 
+### S11: Cache Safety
+
+**Applies to**: cache key construction, cache read/write paths, invalidation/versioning logic
+
+| Check | Severity | Signal |
+|-------|----------|--------|
+| S11.1 | BLOCKER | Cache key missing tenant/user/namespace discriminator where isolation is required |
+| S11.2 | BLOCKER | Key schema changed without versioning/dual-read strategy (old/new key collision risk) |
+| S11.3 | WARNING | Non-canonical key construction (unordered map/object serialization) can collide |
+| S11.4 | WARNING | Shared key prefix/namespace reused across domains/services without partitioning |
+| S11.5 | WARNING | Cache stampede risk on hot keys (no singleflight/lock/jitter on expiry path) |
+
+**Detection**: collect changed key builders, key templates, namespace prefixes, and invalidation/versioning behavior. Flag as BLOCKER when collisions can cause isolation or correctness violations.
+
 ### S12: Sensitive Data in Logs
 
 **Applies to**: new/modified log statements
@@ -226,31 +240,16 @@ find {release_repo_path} -maxdepth 3 -type f \( \
 
 ### Execution Approach
 
-First, use `ctx_batch_execute` to gather all raw data into sandbox:
+Required evidence set:
+- Changed files and diff hunks needed for S1-S13 checks.
+- Symbol/path evidence for compatibility checks (S7) and cache checks (S11).
+- Search evidence for jobs, concurrency/state transitions, config/env usage, and logging changes.
 
-```
-ctx_batch_execute([
-  {label: "migration files", command: "find {release_repo_path} -path '*/migrations/*' -o -name '*.sql' | xargs grep -l 'DROP\|ALTER\|RENAME' 2>/dev/null"},
-  {label: "job definitions", command: "grep -rn '@job\|celery.task\|sidekiq\|queue_as' {release_repo_path} --include='*.py' --include='*.rb'"},
-  {label: "changed file contents", command: "git -C {release_repo_path} diff base-temp/{base_branch}...HEAD -- {file_list}"},
-  ... (add S7.B-E grep commands as needed)
-])
-```
+Example shape only (equivalent commands are acceptable):
 
-Then dispatch one subagent to reason over indexed data:
-
-```
-Agent({
-  subagent_type: "general-purpose",
-  prompt: "Safety audit on changed files: {file_list}.
-           Raw data is indexed in context-mode — use ctx_search to inspect findings.
-           
-           Check all applicable categories (S1-S13) from SAFETY.md.
-           Skip categories that don't apply (report as N/A).
-           
-           Return: check_id, severity, file, line, finding, evidence.
-           No raw file contents."
-})
+```text
+ctx_batch_execute([...diff evidence..., ...migration/job/config/log scans..., ...S7 cross-service scans..., ...S11 key-space scans...])
+ctx_search(["S1", "S2", "S7", "S11", "breaking", "collision", "orphan", "timeout"])
 ```
 
 ### N/A Handling

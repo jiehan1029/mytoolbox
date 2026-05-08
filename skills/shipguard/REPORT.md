@@ -2,25 +2,50 @@
 
 Final output: GO/NO-GO recommendation + deploy runbook + rollback plan.
 
-## Report Structure
+## Inputs (from previous phases)
 
-```markdown
-# Release Safety Report
+- Phase 1: branch/ref metadata
+- Phase 2: `tier_table`, `signature_changes`, `special_files`
+- Phase 3: blast radius, call-site mismatches, API/cross-repo findings
+- Phase 4: safety findings with `BLOCKER|WARNING|INFO` and `N/A`
 
-**Branch**: {release_branch} → {base_branch}
-**Generated**: {timestamp}
-**Commits**: {commit_count}
-**Files changed**: {file_count}
+## Required Report Sections
 
-## Recommendation: {GO | CONDITIONAL GO | NO-GO}
+Generate one markdown report containing these sections in order:
 
-{summary_reason}
+1. Header
+2. Recommendation
+3. Change Summary
+4. Blast Radius
+5. Safety Findings
+6. Safety Coverage
+7. Deploy Runbook
+8. Rollback Plan
+9. Metadata
 
----
+If a section has no rows, include an explicit `(none)` marker.
 
-## 1. Change Summary
+## Section Contracts
 
-### By Tier
+### 1) Header
+
+Required fields:
+- `Branch: {release_branch} -> {base_branch}`
+- `Generated: {timestamp}`
+- `Commits: {commit_count}`
+- `Files changed: {file_count}`
+
+### 2) Recommendation
+
+Required field:
+- `Recommendation: {GO | CONDITIONAL GO | NO-GO}`
+
+Required explanation:
+- one short reason paragraph tied to top risks/findings
+
+### 3) Change Summary
+
+Required table:
 
 | Tier | Count | Categories |
 |------|-------|------------|
@@ -28,128 +53,106 @@ Final output: GO/NO-GO recommendation + deploy runbook + rollback plan.
 | 2 (Hard to reverse) | {n} | {categories} |
 | 3 (Contained) | {n} | {categories} |
 
-### Key Changes
-- {bullet_list_of_significant_changes}
+Required bullets:
+- top significant changes (3-8 bullets)
 
----
+### 4) Blast Radius
 
-## 2. Blast Radius
+Required table:
 
-### High-Impact Symbols
+| Symbol | Initial Tier | Final Tier | Risk | d1 Callers | Processes | Notes |
+|--------|--------------|------------|------|------------|-----------|-------|
+| {symbol_name} | {1|2|3} | {1|2|3} | {LOW|MEDIUM|HIGH|CRITICAL} | {count} | {count} | {notes} |
 
-| Symbol | Risk | Direct Callers | Affected Flows |
-|--------|------|----------------|----------------|
-{high_risk_symbols}
+Required mismatch table:
 
-### API Impact
+| Symbol | Caller | Depth | Mismatch | Via |
+|--------|--------|-------|----------|-----|
+| {symbol_name} | {file:line} | {d1|d2|d3} | {mismatch_kind} | {wrapper@file:line or -} |
 
-| Route | Consumers | Risk | Shape Issues |
-|-------|-----------|------|--------------|
-{api_routes_if_any}
+Optional tables (include if applicable):
+- API impact (`Route | Consumers | Risk | Mismatches | Notes`)
+- Cross-repo impact (`Symbol | Remote Consumers | Deploy Units | Bridge/Fallback`)
 
-### Cross-Repo Impact (if applicable)
+### 5) Safety Findings
 
-| Symbol | Remote Consumers | Deploy Units Affected |
-|--------|------------------|----------------------|
-{cross_repo_if_group_mode}
-
-### Call-Site Mismatches (signature changes)
-
-| Symbol | Caller | Mismatch | Snippet |
-|--------|--------|----------|---------|
-{call_site_mismatches_from_phase3}
-
-{if no mismatches: "(none detected)"}
-
----
-
-## 3. Safety Findings
-
-### Blockers (must fix)
+Required blockers table:
 
 | ID | File | Finding |
 |----|------|---------|
-{blockers_if_any}
+| {check_id} | {file_path} | {finding} |
 
-### Warnings (should address)
+Required warnings table:
 
 | ID | File | Finding | Mitigation |
 |----|------|---------|------------|
-{warnings}
+| {check_id} | {file_path} | {finding} | {mitigation} |
 
----
+### 6) Safety Coverage
 
-## 4. Deploy Runbook
+Required summary block:
 
-### Pre-Deploy Checklist
+```text
+Safety Coverage:
+  BLOCKER: {count}
+  WARNING: {count}
+  INFO: {count}
+  N/A: {check_ids} ({reason})
+```
 
-- [ ] {checklist_items_based_on_findings}
+### 7) Deploy Runbook
 
-### Deploy Sequence
+Required checklist:
+- pre-deploy checks derived from findings
 
-1. {step_1}
-2. {step_2}
-...
+Required sequence:
+- ordered deployment steps
 
-### Dependencies
+Required dependency table:
 
 | Dependency | Required State | How to Verify |
 |------------|----------------|---------------|
-{deploy_dependencies}
+| {dependency} | {state} | {verification} |
 
-### Coordinated Deploys (if cross-service)
+Optional coordinated deploys table (if cross-service):
 
 | Service | Order | Notes |
 |---------|-------|-------|
-{coordinated_deploys_if_any}
+| {service} | {order} | {notes} |
 
----
+### 8) Rollback Plan
 
-## 5. Rollback Plan
+Required:
+- rollback trigger conditions
+- ordered rollback steps
+- rollback limitations
+- data recovery steps when Tier 1 changes require it
 
-### Rollback Trigger Conditions
+### 9) Metadata
 
-- {condition_1}
-- {condition_2}
-
-### Rollback Steps
-
-1. {rollback_step_1}
-2. {rollback_step_2}
-...
-
-### Rollback Limitations
-
-{what_cannot_be_rolled_back}
-
-### Data Recovery (if applicable)
-
-{data_recovery_steps_if_tier1_changes}
-
----
-
-## 6. Metadata
-
-### Repos & Refs
+Required refs table:
 
 | Role | Repo | Branch | Short SHA |
 |------|------|--------|-----------|
-| Release | `{release_repo_path}` | `{release_branch}` | `{release_sha_short}` |
-| Base | `{base_repo_path}` | `{base_branch}` | `{base_sha_short}` |
-| Cross-repo | `{cross_repo_path}` | `{cross_branch}` | `{cross_sha_short}` |
+| Release | {release_repo_path} | {release_branch} | {release_sha_short} |
+| Base | {base_repo_path} | {base_branch} | {base_sha_short} |
+| Cross-repo | {cross_repo_path} | {cross_branch} | {cross_sha_short} |
 
-(Repeat cross-repo row per dependency. Omit cross-repo section if none.)
+Repeat cross-repo row per dependency. Omit cross-repo row if none.
 
-### Analysis
+Required analysis table:
 
 | Field | Value |
 |-------|-------|
-| Analysis mode | `{gitnexus_group \| gitnexus_local \| grep_fallback}` |
-| Cross-links | `{count or "N/A"}` |
-```
+| Analysis mode | {gitnexus_group | gitnexus_local | grep_fallback} |
+| Cross-links | {count or N/A} |
+| Execution notes | {subagent reason or none} |
 
 ## Recommendation Logic
 
+- Combine findings from:
+  - Phase 3 after severity mapping (`CRITICAL -> BLOCKER`, `HIGH on critical path -> WARNING`)
+  - Phase 4 safety findings (`BLOCKER|WARNING|INFO`)
 - ≥1 BLOCKER → **NO-GO**
 - ≥1 WARNING → **CONDITIONAL GO** (list mitigations)
 - otherwise → **GO**
