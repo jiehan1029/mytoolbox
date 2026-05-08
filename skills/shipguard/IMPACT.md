@@ -78,17 +78,42 @@ Agent({
            
            Symbol: {symbol_name} | Kind: {func|constructor}
            Old signature: {old_sig} | New signature: {new_sig}
+           Positional exposure: {HIGH|MEDIUM|LOW|N/A} (from Phase 2 signature table)
            
            Caller files are indexed in context-mode. Use ctx_search to find each call site.
            Callers: {caller_list_from_impact}
            
            Check each site:
-           1. Arity match   2. Type compatibility   3. Return handling
-           4. Error handling   5. Nullable params   6. Keyword arg names
+           1. Arity match
+           2. Positional order — FIRST determine if call is positional or keyword/named:
+              - Positional: foo(a, b, c) — GO/RUST/C/C#/early-JS always positional
+              - Keyword: foo(x=a, y=b) Python/Ruby, foo({x: a}) TS object pattern
+              - Mixed: foo(a, y=b) — positional params still shift if order changed
+              For EVERY positional or mixed call: map arg positions to new param order.
+              Any param that moved position = positional-reorder mismatch even if arity unchanged.
+           3. Variadic/spread: *args, **kwargs, ...rest, ...spread — does unpacking still land
+              in the right parameter after reorder?
+           4. Type compatibility
+           5. Return handling
+           6. Error handling
+           7. Nullable params
+           8. Keyword arg names (renamed params break keyword callers)
            For constructors: super().__init__, new ClassName(), factory patterns.
            
+           For each d1 caller, also classify as:
+           - TRANSPARENT: forwards args unchanged (*args/**kwargs/...rest/...spread)
+           - NAMED-WRAPPER: calls changed fn with its own named params (chain stops here)
+           - TRANSFORMER: reshapes/adapts args before forwarding (chain stops here)
+           
+           For TRANSPARENT callers: chase their callers (d2) from the blast radius data.
+           Callers at d2: {d2_caller_list_from_impact_byDepth}
+           Check each d2 caller's call to the transparent wrapper — apply same positional
+           checks as if d2 were calling the changed fn directly (args flow through unchanged).
+           Report as chain-propagation with via: {d1_wrapper@file:line}.
+           Stop at d3. If d3 reached without finding a transformer, note: 'chain not fully traced'.
+           
            Return rows only (skip compatible sites):
-           | caller | site | mismatch_kind | snippet |"
+           | caller | depth | site | mismatch_kind | via (if chain) | snippet |"
 })
 ```
 
@@ -112,13 +137,54 @@ Limit: verify all callers in 1, 2, 3 and 5, skip 4 and inform user how many are 
 
 Mismatch kinds (all are breaking):
 - `arity` — wrong number of args
+- `positional-reorder` — param moved to different position; positional caller silently passes wrong value (arity may be unchanged)
+- `variadic-shift` — *args / ...rest / spread shifts surrounding positional args
+- `chain-propagation` — d1 is transparent pass-through; d2+ caller exposed to same positional/kwarg breakage (include `via: wrapper@file:line`)
 - `type` — arg type incompatible
 - `nullable-now-required` — optional param now required
 - `return-type-changed` — caller doesn't handle new return
 - `ignored-error` — new error not caught
-- `param-order-swap` — args in wrong order
-- `keyword-renamed` — keyword arg name changed
+- `keyword-renamed` — keyword arg name changed (breaks keyword/named callers)
 - `super-init-mismatch` — subclass super() call broken
+
+Note: `positional-reorder` is the highest-severity silent failure — no compile/runtime error in dynamic languages, wrong data flows silently. `chain-propagation` compounds this: breakage at d2+ is never visible at d1. Prioritize both in report.
+
+### Call-Chain Propagation
+
+**Problem**: d1 callers that are transparent pass-throughs expose their own callers (d2+) to the same positional/kwarg breakage. Checking only d1 misses these.
+
+**Pass-through classifier** — for each d1 caller with a mismatch or borderline-safe finding, classify:
+
+| Pattern | Class | Chain action |
+|---------|-------|--------------|
+| `def bar(*args, **kwargs): foo(*args, **kwargs)` | Transparent | Chase d2 — d2 callers see foo's new signature |
+| `fn bar(...args) { foo(...args) }` | Transparent | Chase d2 |
+| `def bar(x, y): foo(x, y)` | Named wrapper | Chain STOPS — d2 callers of bar see bar's unchanged signature; only bar's body is broken |
+| `def bar(a, b): foo(b, a)` | Transformer | Chain STOPS — bar adapts positional order |
+| `def bar(a, b, c): foo(a+b, c)` | Transformer | Chain STOPS |
+
+**When to chase d2**:
+
+Only when d1 is a transparent wrapper. Use blast radius data already captured (byDepth d=2 from `impact` call). Load d2 caller files via `ctx_batch_execute`, then verify against the original changed symbol's new signature — not bar's signature.
+
+```
+ctx_batch_execute([
+  {label: "d2-caller:{file}", command: "sed -n '{lines}p' {d2_caller_file}"},
+  ...
+])
+```
+
+Report chain propagation rows with the full path:
+
+- `chain-propagation` — arg flows through transparent wrapper; d2+ caller's positional layout may be incompatible with changed fn's new signature. Include `via: bar@file:line` in snippet.
+
+**Chain depth limit**: stop at d3 (already the maxDepth fetched from `impact`). Beyond d3, note "chain not fully traced — manual review recommended" in report.
+
+**Termination conditions** (stop chasing deeper regardless of depth):
+- Caller is a transformer (reshapes args)
+- Caller exposes a different public signature (different param count or names)
+- Caller is in a separate deploy unit (cross-service boundary — flag as cross-service-chain)
+- d3 reached
 
 
 ## API Route Analysis
@@ -290,9 +356,9 @@ git -C {release_repo_path} grep -nE "\\b{symbol_name}\\b" -- ':(exclude)vendor' 
 
 ### Call-Site Verification Table (replaces raw counts)
 
-| Symbol | Caller | Site | Mismatch | Snippet |
-|--------|--------|------|----------|---------|
-| `{symbol_name}` | `{file:line}` | `{call_code}` | `{mismatch_kind}` | `{explanation}` |
+| Symbol | Caller | Depth | Site | Mismatch | Via | Snippet |
+|--------|--------|-------|------|----------|-----|---------|
+| `{symbol_name}` | `{file:line}` | `d1\|d2\|d3` | `{call_code}` | `{mismatch_kind}` | `{wrapper@file:line or —}` | `{explanation}` |
 
 ### API Impact Table
 

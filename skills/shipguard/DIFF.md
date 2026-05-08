@@ -166,17 +166,33 @@ Agent({
            - Other languages: skip signature table, note in output
            
            Change severity:
-           - HIGH: arity change, param removed, type change, required param added
-           - MEDIUM: return type narrowed, default changed, param renamed
+           - HIGH: arity change, param removed, type change, required param added,
+                   param reordered (positional-order-changed), variadic added/removed/moved
+           - MEDIUM: return type narrowed, default changed, param renamed (keyword callers affected)
            - LOW: optional param added, return type widened
+           
+           POSITIONAL ORDER RULE: If any parameter moved to a different position (even if arity
+           is unchanged and types look compatible), flag as HIGH / positional-order-changed.
+           Callers using positional syntax silently pass wrong values — no error at call time.
+           
+           Variadic changes to flag:
+           - *args/*kwargs / ...rest / variadic added: callers passing fixed positionals may shift
+           - variadic removed: spread callers break
+           - variadic moved (e.g., *args no longer last): always HIGH
            
            Return TWO tables:
            
            TIER TABLE:
            | symbol | file | tier | category | notes |
            
-           SIGNATURE TABLE:
-           | symbol | kind | file | old_sig | new_sig | change_type | risk |
+           SIGNATURE TABLE — include a positional_exposure column:
+           | symbol | kind | file | old_sig | new_sig | change_type | positional_exposure | risk |
+           
+           positional_exposure values:
+           - HIGH: Go, C, Rust, C# (no named args) — any reorder is always positional-unsafe
+           - MEDIUM: Python, Ruby (keyword args possible but positional callers exist)
+           - LOW: TypeScript with object-param pattern ({a, b} destructuring) — named, reorder-safe
+           - N/A: no positional risk (change_type unrelated to ordering)
            
            No raw diff or file contents in output."
 })
@@ -225,11 +241,11 @@ Agent(subagent_B_prompt)
 |--------|------|------|----------|-------|
 | `{symbol_name}` | `{file_path}` | `{1\|2\|3}` | `{category}` | `{notes}` |
 
-### Signature Changes (from Subagent B)
+### Signature Changes (from Subagent A)
 
-| Symbol | Kind | File | Old | New | Change | Risk |
-|--------|------|------|-----|-----|--------|------|
-| `{symbol_name}` | `{func\|constructor}` | `{file_path}` | `{old_sig}` | `{new_sig}` | `{change_type}` | `{risk}` |
+| Symbol | Kind | File | Old | New | Change | Positional Exposure | Risk |
+|--------|------|------|-----|-----|--------|---------------------|------|
+| `{symbol_name}` | `{func\|constructor}` | `{file_path}` | `{old_sig}` | `{new_sig}` | `{change_type}` | `{HIGH\|MEDIUM\|LOW\|N/A}` | `{risk}` |
 
 ### Cross-Cutting Findings (from Subagent C)
 
