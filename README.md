@@ -24,6 +24,15 @@ Lightweight. /tdd is handy when fixing a bug.
 #### Gitnexus
 When I need impact analysis and see the blast radius of the code change.
 
+#### Shipguard
+[Shipguard](./skills/shipguard/README.md) is a skill I made to gain confidence in releases. 
+
+It's value proposition:
+
+> I need to feel safe to release the code which I have not reviewed fully. The focus is not on feature completeness but on release safety -- full self-consistency, no migration risk, no cross-service contract violation, clear deploy dependency and rollback plan.
+
+Still new and under test.
+
 #### Graphify
 A structured 'Karpathy method'. Good for large codebases and docs. But I do not like to store docs in codebase -- they drift from implementation easily. Still trying to figure out the best use case.
 
