@@ -69,8 +69,10 @@ These rules apply to every phase unless a phase explicitly overrides them.
 - If a known-good command already fits the phase contract, use it directly.
 - If a path fails, try one equivalent path and continue with fallback marking.
 
-5. Subagents when needed
-- Use subagents opportunistically for large or cross-repo analysis; main agent is fine for small scope.
+5. Subagents — mandatory for heavy phases
+- **Phase 4 (Safety Audit) always runs as a subagent.** 14.5KB of check instructions must not accumulate in main context.
+- **Phase 3 (Impact Analysis) runs as a subagent when `tier_table` has ≥1 Tier 1 or Tier 2 symbol** (covers almost all non-trivial diffs).
+- Use subagents opportunistically for other large or cross-repo analysis.
 - If subagents are used, include a one-line reason in phase output or metadata.
 
 6. Contract preservation
